@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <Button
+        android:id="@+id/registerBtn"
+        android:text="REGISTER"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:textSize="24sp"
+        android:layout_marginBottom="24dp"/>
+
+    <Button
+        android:id="@+id/attendanceBtn"
+        android:text="ATTENDANCE"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:textSize="24sp"/>
+</LinearLayout>
