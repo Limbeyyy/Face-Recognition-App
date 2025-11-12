@@ -1,4 +1,4 @@
-package com.example.facedetproject;
+package com.example.attendancefacerecognition;
 
 import android.content.Intent;
 import android.os.Bundle;
@@ -6,10 +6,10 @@ import android.widget.Button;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.example.facedetproject.UI.AttendanceActivity;
-import com.example.facedetproject.UI.RegisterActivity;
-import com.example.facedetproject.UI.DeviceLoginActivity;
-import com.example.facedetproject.Utils.AppPrefManager;
+import com.example.attendancefacerecognition.UI.AttendanceActivity;
+import com.example.attendancefacerecognition.UI.RegisterActivity;
+import com.example.attendancefacerecognition.UI.DeviceLoginActivity;
+import com.example.attendancefacerecognition.UI.AppPrefManager;
 
 public class MainActivity extends AppCompatActivity {
     private Button registerBtn, attendanceBtn;

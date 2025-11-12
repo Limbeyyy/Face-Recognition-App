@@ -1,4 +1,4 @@
-package com.example.facedetproject.UI;
+package com.example.attendancefacerecognition.UI;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -18,7 +18,8 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.example.facedetproject.R;
+import com.example.attendancefacerecognition.R;
+import com.example.attendancefacerecognition.UI.Utils;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import org.tensorflow.lite.Interpreter;

@@ -1,4 +1,4 @@
-package com.example.facedetproject.Utils;
+package com.example.attendancefacerecognition.UI;
 
 import android.content.Context;
 import android.content.SharedPreferences;

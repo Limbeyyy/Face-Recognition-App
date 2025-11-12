@@ -1,11 +1,11 @@
-package com.example.facedetproject.UI;
+package com.example.attendancefacerecognition.UI;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.Bundle;
-import android.widget.Button;
-import android.widget.EditText;
+import android.os.Handler;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -18,65 +18,73 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.example.facedetproject.R;
+import com.example.attendancefacerecognition.R;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import org.tensorflow.lite.Interpreter;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class RegisterActivity extends AppCompatActivity {
+public class AttendanceActivity extends AppCompatActivity {
 
-    private static final int CAMERA_PERMISSION_CODE = 111;
+    private static final int CAMERA_PERMISSION_CODE = 101;
+
     private PreviewView previewView;
-    private Button btnCapture, btnSave;
-    private EditText etName;
+    private FaceOverlayView faceOverlay;
     private ExecutorService cameraExecutor;
     private Interpreter tflite;
 
-    // collect embeddings for the new person
-    private List<float[]> collectedEmbeddings = new ArrayList<>();
+    // aggregation
+    private final List<String> frameResults = new ArrayList<>();
+    private final Handler handler = new Handler();
+    private Runnable aggregateRunnable;
+
+    // known embeddings/names loaded from assets
+    private float[][] knownEmbeddings;
+    private String[] knownNames;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_register);
+        setContentView(R.layout.activity_attendance);
 
-        previewView = findViewById(R.id.previewViewRegister);
-        btnCapture = findViewById(R.id.btnCapture);
-        btnSave = findViewById(R.id.btnSave);
-        etName = findViewById(R.id.etName);
-
+        previewView = findViewById(R.id.previewView);
+        faceOverlay = findViewById(R.id.faceOverlay);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
         try {
             tflite = new Interpreter(Utils.loadModelFile(this, "facenet.tflite"));
-        } catch (Exception e) {
+        } catch (IOException e) {
             e.printStackTrace();
-            Toast.makeText(this, "Failed to load model", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Model load failed", Toast.LENGTH_SHORT).show();
+            return;
         }
 
-        btnCapture.setOnClickListener(v -> Toast.makeText(this, "Capturing 5 frames; move head slightly", Toast.LENGTH_SHORT).show());
-        btnSave.setOnClickListener(v -> {
-            String name = etName.getText().toString().trim();
-            if (name.isEmpty()) { Toast.makeText(this,"Enter name",Toast.LENGTH_SHORT).show(); return; }
-            if (collectedEmbeddings.isEmpty()) { Toast.makeText(this,"No captures",Toast.LENGTH_SHORT).show(); return; }
-            boolean ok = Utils.appendEmbeddings(this, collectedEmbeddings, name);
-            Toast.makeText(this, ok ? "Saved":"Save failed", Toast.LENGTH_SHORT).show();
-            if (ok) finish();
-        });
+        // load known embeddings & names from assets
+        Utils.EmbeddingsData data = Utils.loadEmbeddingsAndNames(this, "embeddings.bin", "names.json");
+        knownEmbeddings = data.embeddings;
+        knownNames = data.names;
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_CODE);
-        } else startCamera();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA},
+                    CAMERA_PERMISSION_CODE);
+        } else {
+            startCamera();
+        }
     }
 
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
@@ -90,28 +98,75 @@ public class RegisterActivity extends AppCompatActivity {
                         .build();
 
                 analysis.setAnalyzer(cameraExecutor, image -> {
-                    // When user presses capture, we capture N frames and compute embeddings
-                    // For simplicity, only compute embedding on demand; actual capture logic
-                    // can store frames into a small buffer to pick next N frames.
-                    image.close();
+                    processImageProxy(image);
                 });
 
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
-    // handle permission result
+    private void processImageProxy(@NonNull ImageProxy image) {
+        Bitmap bitmap = Utils.imageProxyToBitmap(image);
+        if (bitmap != null) {
+            // 1) detect faces using MediaPipe (TODO: implement in Utils)
+            List<Rect> faces = Utils.detectFacesMediaPipe(bitmap);
+
+            // 2) For each face, crop, get embedding & match
+            List<String> namesForOverlay = new ArrayList<>();
+            for (Rect r : faces) {
+                // safe crop
+                int left = Math.max(0, r.left);
+                int top = Math.max(0, r.top);
+                int right = Math.min(bitmap.getWidth(), r.right);
+                int bottom = Math.min(bitmap.getHeight(), r.bottom);
+                if (right - left <= 0 || bottom - top <= 0) continue;
+
+                Bitmap faceBmp = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
+                float[] emb = Utils.getFaceEmbedding(faceBmp, tflite);
+                String name = Utils.recognizeFace(emb, knownEmbeddings, knownNames, 0.65f);
+                namesForOverlay.add(name);
+                frameResults.add(name);
+            }
+
+            // update overlay (UI thread)
+            runOnUiThread(() -> faceOverlay.setFaces(faces, namesForOverlay));
+
+            // aggregation: schedule result after 5 seconds of inactivity
+            if (aggregateRunnable != null) handler.removeCallbacks(aggregateRunnable);
+            aggregateRunnable = () -> {
+                String confirmed = getMostFrequent(frameResults);
+                runOnUiThread(() -> Toast.makeText(AttendanceActivity.this, "Marked: " + confirmed, Toast.LENGTH_LONG).show());
+                frameResults.clear();
+                // TODO: Save attendance (send to server or local DB)
+                // optionally finish() or show UI
+            };
+            handler.postDelayed(aggregateRunnable, 5000);
+        }
+        image.close();
+    }
+
+    private String getMostFrequent(List<String> list) {
+        Map<String, Integer> freq = new HashMap<>();
+        for (String s : list) freq.put(s, freq.getOrDefault(s, 0) + 1);
+        String best = "Unknown"; int bestCount = 0;
+        for (Map.Entry<String, Integer> e : freq.entrySet()) {
+            if (e.getValue() > bestCount) { bestCount = e.getValue(); best = e.getKey(); }
+        }
+        return best;
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode,@NonNull String[] permissions,@NonNull int[] grantResults){
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
-        if(requestCode==CAMERA_PERMISSION_CODE && grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED){
+        if (requestCode==CAMERA_PERMISSION_CODE && grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED){
             startCamera();
         } else {
-            Toast.makeText(this,"Camera permission required",Toast.LENGTH_SHORT).show();
+            Toast.makeText(this,"Camera permission denied",Toast.LENGTH_SHORT).show();
         }
     }
 }

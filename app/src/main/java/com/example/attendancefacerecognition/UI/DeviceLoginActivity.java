@@ -1,4 +1,4 @@
-package com.example.facedetproject.UI;
+package com.example.attendancefacerecognition.UI;
 
 import android.content.Intent;
 import android.graphics.Color;
@@ -8,10 +8,10 @@ import android.widget.EditText;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
-
-import com.example.facedetproject.MainActivity;
-import com.example.facedetproject.R;
-import com.example.facedetproject.Utils.AppPrefManager;
+import com.example.attendancefacerecognition.UI.AppPrefManager;
+import com.example.attendancefacerecognition.MainActivity;
+import com.example.attendancefacerecognition.R;
+;
 
 public class DeviceLoginActivity extends AppCompatActivity {
     private EditText etDeviceId, etPassword, etUrl;

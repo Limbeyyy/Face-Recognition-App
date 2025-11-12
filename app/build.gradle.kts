@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.AttendanceFaceRecognition"
+    namespace = "com.example.attendancefacerecognition"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.AttendanceFaceRecognition"
+        applicationId = "com.example.attendancefacerecognition"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

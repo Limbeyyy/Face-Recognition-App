@@ -1,4 +1,4 @@
-package com.example.facedetproject.UI;
+package com.example.attendancefacerecognition.UI;
 
 import android.content.Context;
 import android.graphics.Canvas;

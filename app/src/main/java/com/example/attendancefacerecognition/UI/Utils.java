@@ -1,4 +1,4 @@
-package com.example.facedetproject.UI;
+package com.example.attendancefacerecognition.UI;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -53,16 +53,17 @@ public class Utils {
     }
 
     // --------- load TFLite model from assets -------------
-    public static MappedByteBuffer loadModelFile(Context ctx, String assetName) throws IOException {
-        try (InputStream is = ctx.getAssets().open(assetName)) {
-            byte[] bytes = readAllBytes(is);
-            ByteBuffer bb = ByteBuffer.allocateDirect(bytes.length);
-            bb.order(ByteOrder.nativeOrder());
-            bb.put(bytes);
-            bb.rewind();
-            return bb.asReadOnlyBuffer();
+    public static MappedByteBuffer loadModelFile(Context context, String assetName) throws IOException {
+        try (android.content.res.AssetFileDescriptor fileDescriptor = context.getAssets().openFd(assetName);
+             java.io.FileInputStream inputStream = new java.io.FileInputStream(fileDescriptor.getFileDescriptor());
+             java.nio.channels.FileChannel fileChannel = inputStream.getChannel()) {
+
+            long startOffset = fileDescriptor.getStartOffset();
+            long declaredLength = fileDescriptor.getDeclaredLength();
+            return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
         }
     }
+
 
     private static byte[] readAllBytes(InputStream is) throws IOException {
         ByteArrayOutputStream bout = new ByteArrayOutputStream();
