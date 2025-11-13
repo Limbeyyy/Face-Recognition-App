@@ -3,7 +3,11 @@ package com.example.attendancefacerecognition.UI;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
+import android.util.Size;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
@@ -25,10 +29,16 @@ import com.google.common.util.concurrent.ListenableFuture;
 import org.tensorflow.lite.Interpreter;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+
 
 public class RegisterActivity extends AppCompatActivity {
 
@@ -39,6 +49,14 @@ public class RegisterActivity extends AppCompatActivity {
     private ExecutorService cameraExecutor;
     private Interpreter tflite;
 
+    private FaceOverlayView faceOverlay;
+
+    private float[][] knownEmbeddings;
+    private String[] knownNames;
+    private final List<String> frameResults = new ArrayList<>();
+    private final Handler handler = new Handler();
+    private Runnable aggregateRunnable;
+
     // collect embeddings for the new person
     private List<float[]> collectedEmbeddings = new ArrayList<>();
 
@@ -48,14 +66,13 @@ public class RegisterActivity extends AppCompatActivity {
         setContentView(R.layout.activity_register);
 
         previewView = findViewById(R.id.previewViewRegister);
+        faceOverlay = findViewById(R.id.faceOverlay);
         btnCapture = findViewById(R.id.btnCapture);
         btnSave = findViewById(R.id.btnSave);
         etName = findViewById(R.id.etName);
 
-        cameraExecutor = Executors.newSingleThreadExecutor();
-
         try {
-            tflite = new Interpreter(Utils.loadModelFile(this, "facenet.tflite"));
+            tflite = new Interpreter(Utils.getFaceEmbedding(this, "facenet.tflite"));
         } catch (Exception e) {
             e.printStackTrace();
             Toast.makeText(this, "Failed to load model", Toast.LENGTH_SHORT).show();
@@ -78,32 +95,110 @@ public class RegisterActivity extends AppCompatActivity {
 
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+
+                // Preview use case
                 androidx.camera.core.Preview preview = new androidx.camera.core.Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+                // Front camera
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
 
+                // Image analysis use case
                 ImageAnalysis analysis = new ImageAnalysis.Builder()
+                        .setTargetResolution(new Size(640, 480))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
                 analysis.setAnalyzer(cameraExecutor, image -> {
-                    // When user presses capture, we capture N frames and compute embeddings
-                    // For simplicity, only compute embedding on demand; actual capture logic
-                    // can store frames into a small buffer to pick next N frames.
-                    image.close();
+                    try {
+                        Bitmap bitmap = Utils.imageProxyToBitmap(image);
+                        if (bitmap != null) {
+
+                            // Step 1: Detect faces using MediaPipe (you can replace with ML Kit if needed
+                            Log.d("AttendanceActivity", "Processing bitmap w=" + bitmap.getWidth() + " h=" + bitmap.getHeight());
+
+                            List<Rect> faces = Utils.detectFacesMediaPipe(bitmap);
+                            Log.d("AttendanceActivity", "Detected faces count: " + faces.size());
+
+                            // Step 2: For each detected face, crop and compute embeddings
+                            List<String> detectedNames = new ArrayList<>();
+                            for (Rect rect : faces) {
+                                // Crop safely
+                                int left = Math.max(0, rect.left);
+                                int top = Math.max(0, rect.top);
+                                int right = Math.min(bitmap.getWidth(), rect.right);
+                                int bottom = Math.min(bitmap.getHeight(), rect.bottom);
+                                if (right - left <= 0 || bottom - top <= 0) continue;
+
+                                Bitmap faceBitmap = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
+
+                                // Get face embedding
+                                float[] embedding = Utils.getFaceEmbedding(faceBitmap, tflite);
+
+                                // Compare embedding with stored known embeddings
+                                String recognizedName = Utils.recognizeFace(
+                                        embedding,
+                                        knownEmbeddings,
+                                        Arrays.asList(knownNames),
+                                        0.65f
+                                );
+
+                                detectedNames.add(recognizedName);
+                            }
+
+                            // Step 3: Show detected faces on overlay
+                            runOnUiThread(() -> faceOverlay.setFaces(faces, detectedNames));
+
+                            // Step 4: Aggregate or mark attendance (optional)
+                            if (!detectedNames.isEmpty()) {
+                                frameResults.addAll(detectedNames);
+                                if (aggregateRunnable != null) handler.removeCallbacks(aggregateRunnable);
+                                aggregateRunnable = () -> {
+                                    String confirmed = getMostFrequent(frameResults);
+                                    runOnUiThread(() ->
+                                            Toast.makeText(
+                                                    RegisterActivity.this,
+                                                    "Marked Attendance: " + confirmed,
+                                                    Toast.LENGTH_LONG
+                                            ).show()
+                                    );
+                                    frameResults.clear();
+                                };
+                                handler.postDelayed(aggregateRunnable, 4000);
+                            }
+                        }
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        image.close(); // Always close image or camera will freeze
+                    }
                 });
 
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
+
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
             }
         }, ContextCompat.getMainExecutor(this));
     }
+
+    private String getMostFrequent(List<String> names) {
+        if (names.isEmpty()) return "Unknown";
+
+        Map<String, Integer> freqMap = new HashMap<>();
+        for (String name : names) {
+            freqMap.put(name, freqMap.getOrDefault(name, 0) + 1);
+        }
+
+        return Collections.max(freqMap.entrySet(), Map.Entry.comparingByValue()).getKey();
+    }
+
 
     // handle permission result
     @Override

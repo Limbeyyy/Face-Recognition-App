@@ -1,11 +1,13 @@
 package com.example.attendancefacerecognition.UI;
 
-import android.Manifest;
-import android.content.pm.PackageManager;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.Log;
+import android.util.Size;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -13,44 +15,49 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.example.attendancefacerecognition.R;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.tensorflow.lite.Interpreter;
 
+import java.io.DataInputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import android.util.Pair;
 
 public class AttendanceActivity extends AppCompatActivity {
 
-    private static final int CAMERA_PERMISSION_CODE = 101;
-
     private PreviewView previewView;
     private FaceOverlayView faceOverlay;
-    private ExecutorService cameraExecutor;
-    private Interpreter tflite;
+    private Button btnSwitchCamera;
 
-    // aggregation
-    private final List<String> frameResults = new ArrayList<>();
-    private final Handler handler = new Handler();
+    private ExecutorService cameraExecutor;
+    private Handler handler = new Handler();
     private Runnable aggregateRunnable;
 
-    // known embeddings/names loaded from assets
-    private float[][] knownEmbeddings;
-    private String[] knownNames;
+    private boolean useFrontCamera = true;
+
+    private List<String> knownNames;
+    private List<float[]> knownEmbeddings;
+    private Interpreter tflite;
+
+    private List<String> frameResults = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,50 +66,44 @@ public class AttendanceActivity extends AppCompatActivity {
 
         previewView = findViewById(R.id.previewView);
         faceOverlay = findViewById(R.id.faceOverlay);
+        btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
+
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        try {
-            tflite = new Interpreter(Utils.loadModelFile(this, "facenet.tflite"));
-        } catch (IOException e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Model load failed", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        // Load names, embeddings, model
+        knownNames = loadNamesFromJson("names.json");
+        knownEmbeddings = loadEmbeddings("embeddings.bin");
+        tflite = loadModelFile("facenet.tflite");
 
-        // load known embeddings & names from assets
-        // New (works with the fixed Utils)
-        Pair<float[][], List<String>> data = Utils.loadEmbeddingsAndNames(this);
-        knownEmbeddings = data.first;
-        knownNames = data.second.toArray(new String[0]);
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.CAMERA},
-                    CAMERA_PERMISSION_CODE);
-        } else {
+        btnSwitchCamera.setOnClickListener(v -> {
+            useFrontCamera = !useFrontCamera;
             startCamera();
-        }
+        });
+
+        startCamera();
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                ProcessCameraProvider.getInstance(this);
 
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                androidx.camera.core.Preview preview = new androidx.camera.core.Preview.Builder().build();
+
+                Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+                CameraSelector cameraSelector = useFrontCamera ?
+                        CameraSelector.DEFAULT_FRONT_CAMERA :
+                        CameraSelector.DEFAULT_BACK_CAMERA;
 
                 ImageAnalysis analysis = new ImageAnalysis.Builder()
+                        .setTargetResolution(new Size(640, 480))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
-                analysis.setAnalyzer(cameraExecutor, image -> {
-                    processImageProxy(image);
-                });
+                analysis.setAnalyzer(cameraExecutor, this::processImageProxy);
 
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
@@ -116,13 +117,14 @@ public class AttendanceActivity extends AppCompatActivity {
     private void processImageProxy(@NonNull ImageProxy image) {
         Bitmap bitmap = Utils.imageProxyToBitmap(image);
         if (bitmap != null) {
-            // 1) detect faces using MediaPipe (TODO: implement in Utils)
-            List<Rect> faces = Utils.detectFacesMediaPipe(bitmap);
-
-            // 2) For each face, crop, get embedding & match
+            List<Rect> detectedFaces = Utils.detectFacesMediaPipe(bitmap);
             List<String> namesForOverlay = new ArrayList<>();
-            for (Rect r : faces) {
-                // safe crop
+            List<Rect> scaledRects = new ArrayList<>();
+
+            float scaleX = previewView.getWidth() / (float) bitmap.getWidth();
+            float scaleY = previewView.getHeight() / (float) bitmap.getHeight();
+
+            for (Rect r : detectedFaces) {
                 int left = Math.max(0, r.left);
                 int top = Math.max(0, r.top);
                 int right = Math.min(bitmap.getWidth(), r.right);
@@ -131,23 +133,32 @@ public class AttendanceActivity extends AppCompatActivity {
 
                 Bitmap faceBmp = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
                 float[] emb = Utils.getFaceEmbedding(faceBmp, tflite);
-                String name = Utils.recognizeFace(emb, knownEmbeddings, Arrays.asList(knownNames), 0.65f);
 
+                float[][] embeddingsArray = new float[knownEmbeddings.size()][128];
+                for (int i = 0; i < knownEmbeddings.size(); i++) embeddingsArray[i] = knownEmbeddings.get(i);
+
+                String name = Utils.recognizeFace(emb, embeddingsArray, knownNames, 0.65f);
                 namesForOverlay.add(name);
                 frameResults.add(name);
+
+                Rect scaled = new Rect(
+                        (int) (left * scaleX),
+                        (int) (top * scaleY),
+                        (int) (right * scaleX),
+                        (int) (bottom * scaleY)
+                );
+                scaledRects.add(scaled);
             }
 
-            // update overlay (UI thread)
-            runOnUiThread(() -> faceOverlay.setFaces(faces, namesForOverlay));
+            runOnUiThread(() -> faceOverlay.setFaces(scaledRects, namesForOverlay));
 
-            // aggregation: schedule result after 5 seconds of inactivity
+            // Aggregate every 5 seconds
             if (aggregateRunnable != null) handler.removeCallbacks(aggregateRunnable);
             aggregateRunnable = () -> {
                 String confirmed = getMostFrequent(frameResults);
-                runOnUiThread(() -> Toast.makeText(AttendanceActivity.this, "Marked: " + confirmed, Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> Toast.makeText(this,
+                        "Attendance Marked: " + confirmed, Toast.LENGTH_LONG).show());
                 frameResults.clear();
-                // TODO: Save attendance (send to server or local DB)
-                // optionally finish() or show UI
             };
             handler.postDelayed(aggregateRunnable, 5000);
         }
@@ -155,22 +166,66 @@ public class AttendanceActivity extends AppCompatActivity {
     }
 
     private String getMostFrequent(List<String> list) {
-        Map<String, Integer> freq = new HashMap<>();
-        for (String s : list) freq.put(s, freq.getOrDefault(s, 0) + 1);
-        String best = "Unknown"; int bestCount = 0;
-        for (Map.Entry<String, Integer> e : freq.entrySet()) {
-            if (e.getValue() > bestCount) { bestCount = e.getValue(); best = e.getKey(); }
+        if (list.isEmpty()) return "Unknown";
+        String most = null;
+        int maxCount = 0;
+        for (String s : list) {
+            int count = 0;
+            for (String t : list) if (t.equals(s)) count++;
+            if (count > maxCount) {
+                maxCount = count;
+                most = s;
+            }
         }
-        return best;
+        return most;
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode,@NonNull String[] permissions,@NonNull int[] grantResults){
-        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
-        if (requestCode==CAMERA_PERMISSION_CODE && grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED){
-            startCamera();
-        } else {
-            Toast.makeText(this,"Camera permission denied",Toast.LENGTH_SHORT).show();
+    private List<String> loadNamesFromJson(String fileName) {
+        List<String> names = new ArrayList<>();
+        try {
+            InputStream is = getAssets().open(fileName);
+            int size = is.available();
+            byte[] buffer = new byte[size];
+            is.read(buffer);
+            is.close();
+            String json = new String(buffer, StandardCharsets.UTF_8);
+            JSONArray jsonArray = new JSONArray(json);
+            for (int i = 0; i < jsonArray.length(); i++) names.add(jsonArray.getString(i));
+        } catch (IOException | JSONException e) {
+            e.printStackTrace();
         }
+        return names;
+    }
+
+    private List<float[]> loadEmbeddings(String fileName) {
+        List<float[]> embeddings = new ArrayList<>();
+        try {
+            InputStream is = getAssets().open(fileName);
+            DataInputStream dis = new DataInputStream(is);
+            while (dis.available() > 0) {
+                float[] embedding = new float[128];
+                for (int i = 0; i < 128; i++) embedding[i] = dis.readFloat();
+                embeddings.add(embedding);
+            }
+            dis.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return embeddings;
+    }
+
+    private Interpreter loadModelFile(String modelFile) {
+        try {
+            AssetFileDescriptor fileDescriptor = getAssets().openFd(modelFile);
+            FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
+            FileChannel fileChannel = inputStream.getChannel();
+            long startOffset = fileDescriptor.getStartOffset();
+            long declaredLength = fileDescriptor.getDeclaredLength();
+            MappedByteBuffer modelBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
+            return new Interpreter(modelBuffer);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 }

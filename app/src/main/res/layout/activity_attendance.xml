@@ -3,13 +3,36 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <Button
+        android:id="@+id/btnSwitchCamera"
+        android:text="Switch Camera"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent" >
+
+        <Button
+            android:id="@+id/btnAttendance"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="@color/purple_500"
+            android:text="Mark Attendance"
+            android:textColor="@android:color/white" />
+    </androidx.camera.view.PreviewView>
+
 
     <com.example.attendancefacerecognition.UI.FaceOverlayView
         android:id="@+id/faceOverlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:visibility="visible" />
+
+
 </FrameLayout>

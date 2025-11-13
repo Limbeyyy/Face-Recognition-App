@@ -1,193 +1,158 @@
 package com.example.attendancefacerecognition.UI;
 
 import android.content.Context;
-import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.util.Log;
-import android.util.Pair;
 
 import androidx.camera.core.ImageProxy;
 
-import org.json.JSONArray;
-
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
+import com.google.mediapipe.framework.image.BitmapImageBuilder;
+import com.google.mediapipe.framework.image.MPImage;
+import com.google.mediapipe.tasks.components.containers.Detection;
+import com.google.mediapipe.tasks.vision.core.RunningMode;
+import com.google.mediapipe.tasks.vision.facedetector.FaceDetector;
+import com.google.mediapipe.tasks.vision.facedetector.FaceDetectorResult;
 
 import org.tensorflow.lite.Interpreter;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
+
 public class Utils {
 
-    // --------------------------------------------------
-    // 1️⃣ Load TFLite model from assets
-    // --------------------------------------------------
-    public static MappedByteBuffer loadModelFile(Context context, String modelName) throws IOException {
-        AssetFileDescriptor fileDescriptor = context.getAssets().openFd(modelName);
-        FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
-        FileChannel fileChannel = inputStream.getChannel();
-        long startOffset = fileDescriptor.getStartOffset();
-        long declaredLength = fileDescriptor.getDeclaredLength();
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
-    }
+    private static final String TAG = "Utils";
+    private static FaceDetector faceDetector;
+    private static Context context;
 
-    // --------------------------------------------------
-    // 2️⃣ Load embeddings.bin + names.json from assets
-    // --------------------------------------------------
-    public static Pair<float[][], List<String>> loadEmbeddingsAndNames(Context context) {
-        float[][] embeddings = null;
-        List<String> names = new ArrayList<>();
-
+    // 🔹 Initialize MediaPipe Face Detector once
+    public static void initFaceDetector(Context context) {
+        if (faceDetector != null) return;
         try {
-            InputStream is = context.getAssets().open("embeddings.bin");
-            int size = is.available();
-            byte[] bytes = new byte[size];
-            int read = is.read(bytes);
-            is.close();
-
-            if (read != size) {
-                Log.w("Utils", "Warning: Not all bytes were read from embeddings.bin");
-            }
-
-            ByteBuffer buffer = ByteBuffer.wrap(bytes);
-            buffer.order(ByteOrder.LITTLE_ENDIAN);
-
-            int numEmbeddings = buffer.getInt();
-            int embeddingSize = buffer.getInt();
-
-            if (numEmbeddings <= 0 || numEmbeddings > 10000 || embeddingSize <= 0 || embeddingSize > 1024) {
-                Log.e("Utils", "Invalid embedding dimensions: " + numEmbeddings + " x " + embeddingSize);
-                return new Pair<>(new float[0][0], names);
-            }
-
-            embeddings = new float[numEmbeddings][embeddingSize];
-            for (int i = 0; i < numEmbeddings; i++) {
-                for (int j = 0; j < embeddingSize; j++) {
-                    embeddings[i][j] = buffer.getFloat();
-                }
-            }
-
-            InputStream namesStream = context.getAssets().open("names.json");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(namesStream));
-            StringBuilder jsonBuilder = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                jsonBuilder.append(line);
-            }
-            reader.close();
-            namesStream.close();
-
-            JSONArray jsonArray = new JSONArray(jsonBuilder.toString());
-            for (int i = 0; i < jsonArray.length(); i++) {
-                names.add(jsonArray.getString(i));
-            }
-
-            Log.i("Utils", "Loaded " + numEmbeddings + " embeddings of size " + embeddingSize);
-
-        } catch (IOException e) {
-            Log.e("Utils", "I/O Error loading embeddings: " + e.getMessage());
+            FaceDetector.FaceDetectorOptions options = FaceDetector.FaceDetectorOptions.builder()
+                    .setMinDetectionConfidence(0.65f)
+                    .setRunningMode(RunningMode.LIVE_STREAM)
+                    .build();
+            faceDetector = FaceDetector.createFromOptions(context, options);
+            Log.d(TAG, "✅ FaceDetector initialized");
         } catch (Exception e) {
-            Log.e("Utils", "Error parsing embeddings: " + e.getMessage());
+            Log.e(TAG, "❌ Failed to init FaceDetector: " + e.getMessage());
         }
-
-        return new Pair<>(embeddings, names);
     }
 
-    // --------------------------------------------------
-    // 3️⃣ Convert ImageProxy to Bitmap
-    // --------------------------------------------------
+    // 🔹 Convert CameraX ImageProxy to Bitmap
     public static Bitmap imageProxyToBitmap(ImageProxy image) {
-        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+        ImageProxy.PlaneProxy plane = image.getPlanes()[0];
+        ByteBuffer buffer = plane.getBuffer();
         byte[] bytes = new byte[buffer.remaining()];
         buffer.get(bytes);
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+
+        Bitmap bitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+        bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(bytes));
+
+        // Rotate if needed
+        Matrix matrix = new Matrix();
+        matrix.postRotate(image.getImageInfo().getRotationDegrees());
+        Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+
+        bitmap.recycle();
+        return rotated;
     }
 
-    // --------------------------------------------------
-    // 4️⃣ Dummy face detection (placeholder)
-    // Replace this with MediaPipe or MLKit logic later
-    // --------------------------------------------------
+    // 🔹 Detect faces using MediaPipe
     public static List<Rect> detectFacesMediaPipe(Bitmap bitmap) {
         List<Rect> faces = new ArrayList<>();
-        // TODO: integrate real MediaPipe face detector
-        // for now, return empty to prevent crash
+        try {
+            // Initialize MediaPipe face detector once
+            if (faceDetector == null) {
+                FaceDetector.FaceDetectorOptions options = FaceDetector.FaceDetectorOptions.builder()
+                        .setRunningMode(RunningMode.IMAGE)
+                        .setMinDetectionConfidence(0.65f)
+                        .build();
+                faceDetector = FaceDetector.createFromOptions(context, options);
+            }
+
+            MPImage mpImage = new BitmapImageBuilder(bitmap).build();
+            FaceDetectorResult result = faceDetector.detect(mpImage);
+
+            if (result != null && !result.detections().isEmpty()) {
+                for (Detection detection : result.detections()) {
+                    RectF rectF = detection.boundingBox();
+                    if (rectF != null) {
+                        faces.add(new Rect(
+                                Math.round(rectF.left),
+                                Math.round(rectF.top),
+                                Math.round(rectF.right),
+                                Math.round(rectF.bottom)
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e("Utils", "Face detection failed: " + e.getMessage());
+        }
         return faces;
     }
 
-    // --------------------------------------------------
-    // 5️⃣ Extract embedding from face Bitmap
-    // --------------------------------------------------
-    public static float[] getFaceEmbedding(Bitmap face, Interpreter tflite) {
-        int inputSize = 160; // typical FaceNet input size
-        Bitmap resized = Bitmap.createScaledBitmap(face, inputSize, inputSize, true);
-        ByteBuffer imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4);
-        imgData.order(ByteOrder.nativeOrder());
 
-        int[] intValues = new int[inputSize * inputSize];
-        resized.getPixels(intValues, 0, inputSize, 0, 0, inputSize, inputSize);
+    // 🔹 Get Face Embedding using TFLite model
+    public static float[] getFaceEmbedding(Bitmap faceBitmap, Interpreter tflite) {
+        Bitmap scaled = Bitmap.createScaledBitmap(faceBitmap, 160, 160, true);
+        ByteBuffer inputBuffer = convertBitmapToBuffer(scaled);
 
-        int pixel = 0;
-        for (int i = 0; i < inputSize; ++i) {
-            for (int j = 0; j < inputSize; ++j) {
-                final int val = intValues[pixel++];
-                imgData.putFloat(((val >> 16) & 0xFF) / 255.0f);
-                imgData.putFloat(((val >> 8) & 0xFF) / 255.0f);
-                imgData.putFloat((val & 0xFF) / 255.0f);
-            }
-        }
+        float[][] embeddings = new float[1][128];
+        tflite.run(inputBuffer, embeddings);
 
-        float[][] embedding = new float[1][128];
-        tflite.run(imgData, embedding);
-        return embedding[0];
+        // Normalize the embedding
+        float norm = 0f;
+        for (float v : embeddings[0]) norm += v * v;
+        norm = (float) Math.sqrt(norm);
+        for (int i = 0; i < 128; i++) embeddings[0][i] /= norm;
+
+        return embeddings[0];
     }
 
-    // --------------------------------------------------
-    // 6️⃣ Compare face embeddings with threshold
-    // --------------------------------------------------
-    public static String recognizeFace(float[] emb, float[][] knownEmbeddings, List<String> knownNames, float threshold) {
-        if (knownEmbeddings == null || knownNames == null || knownEmbeddings.length == 0)
-            return "Unknown";
+    // 🔹 Helper to convert bitmap to float buffer
+    private static ByteBuffer convertBitmapToBuffer(Bitmap bitmap) {
+        ByteBuffer buffer = ByteBuffer.allocateDirect(1 * 160 * 160 * 3 * 4);
+        buffer.order(ByteOrder.nativeOrder());
+        int[] pixels = new int[160 * 160];
+        bitmap.getPixels(pixels, 0, 160, 0, 0, 160, 160);
+        for (int pixel : pixels) {
+            buffer.putFloat(((pixel >> 16) & 0xFF) / 255.0f);
+            buffer.putFloat(((pixel >> 8) & 0xFF) / 255.0f);
+            buffer.putFloat((pixel & 0xFF) / 255.0f);
+        }
+        buffer.rewind();
+        return buffer;
+    }
 
+    // 🔹 Recognize Face (compare embeddings)
+    public static String recognizeFace(float[] emb, float[][] knownEmbeddings, List<String> knownNames, float threshold) {
+        String bestName = "Unknown";
         float minDist = Float.MAX_VALUE;
-        int bestIdx = -1;
 
         for (int i = 0; i < knownEmbeddings.length; i++) {
-            float dist = 0;
-            for (int j = 0; j < emb.length; j++) {
-                float diff = emb[j] - knownEmbeddings[i][j];
-                dist += diff * diff;
-            }
-            dist = (float) Math.sqrt(dist);
+            float dist = l2Distance(emb, knownEmbeddings[i]);
             if (dist < minDist) {
                 minDist = dist;
-                bestIdx = i;
+                bestName = knownNames.get(i);
             }
         }
-
-        if (minDist < threshold && bestIdx >= 0) {
-            return knownNames.get(bestIdx);
-        } else {
-            return "Unknown";
-        }
+        return (minDist < threshold) ? bestName : "Unknown";
     }
 
-    // --------------------------------------------------
-    // 7️⃣ Append new embedding (if you save new faces)
-    // --------------------------------------------------
-    public static boolean appendEmbeddings(Context context, List<float[]> newEmbeddings, String name) {
-        // For simplicity, this is just a placeholder
-        // You can later write to your own .bin or JSON
-        Log.i("Utils", "Appended embedding for: " + name);
-        return true;
+    // 🔹 Calculate L2 distance
+    private static float l2Distance(float[] a, float[] b) {
+        float sum = 0f;
+        for (int i = 0; i < a.length; i++) {
+            float diff = a[i] - b[i];
+            sum += diff * diff;
+        }
+        return (float) Math.sqrt(sum);
     }
 }

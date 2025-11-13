@@ -5,27 +5,47 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewViewRegister"
+    <!-- Camera preview + overlay stacked together -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"/>
+        android:layout_weight="1">
 
+        <androidx.camera.view.PreviewView
+            android:id="@+id/previewViewRegister"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.example.attendancefacerecognition.UI.FaceOverlayView
+            android:id="@+id/faceOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:visibility="visible" />
+    </FrameLayout>
+
+    <!-- User name input -->
     <EditText
         android:id="@+id/etName"
         android:hint="Full name"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content"
+        android:inputType="textPersonName"
+        android:padding="8dp" />
 
+    <!-- Capture and Save buttons -->
     <Button
         android:id="@+id/btnCapture"
         android:text="Capture Frame"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" />
 
     <Button
         android:id="@+id/btnSave"
         android:text="Save Registered Person"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" />
+
 </LinearLayout>
