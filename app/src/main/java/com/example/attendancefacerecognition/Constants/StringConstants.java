@@ -1,4 +1,4 @@
-package com.example.facedetproject.Constants;
+package com.example.attendancefacerecognition.Constants;
 
 public class StringConstants {
     public static final String TYPE_REGISTER = "REGISTER";

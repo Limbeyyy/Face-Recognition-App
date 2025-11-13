@@ -28,9 +28,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.util.Pair;
 
 public class AttendanceActivity extends AppCompatActivity {
 
@@ -68,9 +70,10 @@ public class AttendanceActivity extends AppCompatActivity {
         }
 
         // load known embeddings & names from assets
-        Utils.EmbeddingsData data = Utils.loadEmbeddingsAndNames(this, "embeddings.bin", "names.json");
-        knownEmbeddings = data.embeddings;
-        knownNames = data.names;
+        // New (works with the fixed Utils)
+        Pair<float[][], List<String>> data = Utils.loadEmbeddingsAndNames(this);
+        knownEmbeddings = data.first;
+        knownNames = data.second.toArray(new String[0]);
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -128,7 +131,8 @@ public class AttendanceActivity extends AppCompatActivity {
 
                 Bitmap faceBmp = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
                 float[] emb = Utils.getFaceEmbedding(faceBmp, tflite);
-                String name = Utils.recognizeFace(emb, knownEmbeddings, knownNames, 0.65f);
+                String name = Utils.recognizeFace(emb, knownEmbeddings, Arrays.asList(knownNames), 0.65f);
+
                 namesForOverlay.add(name);
                 frameResults.add(name);
             }

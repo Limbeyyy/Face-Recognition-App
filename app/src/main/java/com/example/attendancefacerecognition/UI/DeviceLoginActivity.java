@@ -11,7 +11,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.attendancefacerecognition.UI.AppPrefManager;
 import com.example.attendancefacerecognition.MainActivity;
 import com.example.attendancefacerecognition.R;
-;
+
 
 public class DeviceLoginActivity extends AppCompatActivity {
     private EditText etDeviceId, etPassword, etUrl;
