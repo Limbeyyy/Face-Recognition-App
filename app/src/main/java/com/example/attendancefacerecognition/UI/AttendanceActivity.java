@@ -56,6 +56,11 @@ public class AttendanceActivity extends AppCompatActivity {
     private List<String> knownNames;
     private List<float[]> knownEmbeddings;
     private Interpreter tflite;
+    private Interpreter faceDetector;
+
+    private ProcessCameraProvider cameraProvider;
+    private ImageAnalysis.Analyzer imageAnalyzer;
+
 
     private List<String> frameResults = new ArrayList<>();
 
@@ -63,7 +68,7 @@ public class AttendanceActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_attendance);
-
+        faceDetector = Utils.loadBlazeFaceModel(this, "blaze_face_short_range.tflite");
         previewView = findViewById(R.id.previewView);
         faceOverlay = findViewById(R.id.faceOverlay);
         btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
@@ -81,6 +86,8 @@ public class AttendanceActivity extends AppCompatActivity {
         });
 
         startCamera();
+        cameraExecutor = Executors.newSingleThreadExecutor();
+
     }
 
     private void startCamera() {
@@ -89,80 +96,99 @@ public class AttendanceActivity extends AppCompatActivity {
 
         cameraProviderFuture.addListener(() -> {
             try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                cameraProvider = cameraProviderFuture.get();   // <--- IMPORTANT
 
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                CameraSelector cameraSelector = useFrontCamera ?
-                        CameraSelector.DEFAULT_FRONT_CAMERA :
-                        CameraSelector.DEFAULT_BACK_CAMERA;
+                imageAnalyzer = this::processImageProxy;
 
                 ImageAnalysis analysis = new ImageAnalysis.Builder()
-                        .setTargetResolution(new Size(640, 480))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
-                analysis.setAnalyzer(cameraExecutor, this::processImageProxy);
+                analysis.setAnalyzer(cameraExecutor, imageAnalyzer);
+
+                CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
 
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, analysis);
 
-            } catch (ExecutionException | InterruptedException e) {
+            } catch (Exception e) {
                 e.printStackTrace();
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
+    private void shutdownCamera() {
+        try {
+            if (cameraProvider != null) {
+                cameraProvider.unbindAll();
+                cameraProvider = null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        if (cameraExecutor != null && !cameraExecutor.isShutdown()) {
+            cameraExecutor.shutdownNow();
+        }
+    }
+
+
     private void processImageProxy(@NonNull ImageProxy image) {
         Bitmap bitmap = Utils.imageProxyToBitmap(image);
         if (bitmap != null) {
-            List<Rect> detectedFaces = Utils.detectFacesMediaPipe(bitmap);
-            List<String> namesForOverlay = new ArrayList<>();
-            List<Rect> scaledRects = new ArrayList<>();
+            try {
+                List<Rect> detectedFaces = Utils.detectFacesBlazeFace(bitmap, faceDetector);
+                List<String> namesForOverlay = new ArrayList<>();
+                List<Rect> scaledRects = new ArrayList<>();
 
-            float scaleX = previewView.getWidth() / (float) bitmap.getWidth();
-            float scaleY = previewView.getHeight() / (float) bitmap.getHeight();
+                float scaleX = previewView.getWidth() / (float) bitmap.getWidth();
+                float scaleY = previewView.getHeight() / (float) bitmap.getHeight();
 
-            for (Rect r : detectedFaces) {
-                int left = Math.max(0, r.left);
-                int top = Math.max(0, r.top);
-                int right = Math.min(bitmap.getWidth(), r.right);
-                int bottom = Math.min(bitmap.getHeight(), r.bottom);
-                if (right - left <= 0 || bottom - top <= 0) continue;
+                for (Rect r : detectedFaces) {
+                    int left = Math.max(0, r.left);
+                    int top = Math.max(0, r.top);
+                    int right = Math.min(bitmap.getWidth(), r.right);
+                    int bottom = Math.min(bitmap.getHeight(), r.bottom);
+                    if (right - left <= 0 || bottom - top <= 0) continue;
 
-                Bitmap faceBmp = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
-                float[] emb = Utils.getFaceEmbedding(faceBmp, tflite);
+                    Bitmap faceBmp = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
+                    float[] emb = Utils.getFaceEmbedding(faceBmp, tflite);
 
-                float[][] embeddingsArray = new float[knownEmbeddings.size()][128];
-                for (int i = 0; i < knownEmbeddings.size(); i++) embeddingsArray[i] = knownEmbeddings.get(i);
+                    float[][] embeddingsArray = new float[knownEmbeddings.size()][128];
+                    for (int i = 0; i < knownEmbeddings.size(); i++)
+                        embeddingsArray[i] = knownEmbeddings.get(i);
 
-                String name = Utils.recognizeFace(emb, embeddingsArray, knownNames, 0.65f);
-                namesForOverlay.add(name);
-                frameResults.add(name);
+                    String name = Utils.recognizeFace(emb, embeddingsArray, knownNames, 0.65f);
+                    namesForOverlay.add(name);
+                    frameResults.add(name);
 
-                Rect scaled = new Rect(
-                        (int) (left * scaleX),
-                        (int) (top * scaleY),
-                        (int) (right * scaleX),
-                        (int) (bottom * scaleY)
-                );
-                scaledRects.add(scaled);
+                    Rect scaled = new Rect(
+                            (int) (left * scaleX),
+                            (int) (top * scaleY),
+                            (int) (right * scaleX),
+                            (int) (bottom * scaleY)
+                    );
+                    scaledRects.add(scaled);
+                }
+
+                runOnUiThread(() -> faceOverlay.setFaces(scaledRects, namesForOverlay));
+
+                // Aggregate every 5 seconds
+                if (aggregateRunnable != null) handler.removeCallbacks(aggregateRunnable);
+                aggregateRunnable = () -> {
+                    String confirmed = getMostFrequent(frameResults);
+                    runOnUiThread(() -> Toast.makeText(this,
+                            "Attendance Marked: " + confirmed, Toast.LENGTH_LONG).show());
+                    frameResults.clear();
+                };
+                handler.postDelayed(aggregateRunnable, 5000);
+            } finally {
+                image.close();
             }
-
-            runOnUiThread(() -> faceOverlay.setFaces(scaledRects, namesForOverlay));
-
-            // Aggregate every 5 seconds
-            if (aggregateRunnable != null) handler.removeCallbacks(aggregateRunnable);
-            aggregateRunnable = () -> {
-                String confirmed = getMostFrequent(frameResults);
-                runOnUiThread(() -> Toast.makeText(this,
-                        "Attendance Marked: " + confirmed, Toast.LENGTH_LONG).show());
-                frameResults.clear();
-            };
-            handler.postDelayed(aggregateRunnable, 5000);
         }
-        image.close();
     }
 
     private String getMostFrequent(List<String> list) {
@@ -228,4 +254,18 @@ public class AttendanceActivity extends AppCompatActivity {
         }
         return null;
     }
+
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        shutdownCamera();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        shutdownCamera();
+    }
+
 }
