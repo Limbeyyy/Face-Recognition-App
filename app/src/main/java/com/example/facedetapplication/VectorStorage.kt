@@ -59,4 +59,25 @@ class VectorStorage(private val db: AppDatabase) {
         }
         return d / (sqrt(na) * sqrt(nb) + 1e-6f)
     }
+
+    /** Store embedding for a given person (used in AddFaceActivity) */
+//    fun store(name: String, embedding: FloatArray) {
+//        val dao = db.dao()
+//        val pid = dao.getPersons().find { it.name == name }?.id
+//            ?: dao.insertPerson(PersonEntity(name = name))
+//
+//        dao.insertEmbedding(
+//            EmbeddingEntity(
+//                personId = pid,
+//                vector = embedding,
+//                weight = 1f // default weight for stored gallery images
+//            )
+//        )
+//    }
+
+    /** Return list of all stored person names */
+    fun getAllNames(): List<String> {
+        val dao = db.dao()
+        return dao.getPersons().map { it.name }
+    }
 }

@@ -17,6 +17,8 @@ class CameraManager(
     private val context: Context,
     private val analyzer: ImageAnalysis.Analyzer
 ) {
+    private var cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+
     fun start(previewView: PreviewView) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -34,10 +36,26 @@ class CameraManager(
             provider.unbindAll()
             provider.bindToLifecycle(
                 lifecycleOwner,
-                CameraSelector.DEFAULT_FRONT_CAMERA,
+                cameraSelector,
                 preview,
                 analysis
             )
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    fun flipCamera() {
+        cameraSelector = if (cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA)
+            CameraSelector.DEFAULT_BACK_CAMERA
+        else
+            CameraSelector.DEFAULT_FRONT_CAMERA
+
+        // Restart camera preview with new selector
+        start(previewViewGlobal)
+    }
+
+    private lateinit var previewViewGlobal: PreviewView
+    fun startWithReference(previewView: PreviewView) {
+        previewViewGlobal = previewView
+        start(previewView)
     }
 }

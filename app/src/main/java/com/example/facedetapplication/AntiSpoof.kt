@@ -10,6 +10,7 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.max
 import kotlin.math.min
+import androidx.core.graphics.scale
 
 class AntiSpoof(
     context: Context,
@@ -43,12 +44,7 @@ class AntiSpoof(
      */
     fun predict(frame: Bitmap, bbox: Rect): Float {
         val cropped = cropSafe(frame, bbox)
-        val resized = Bitmap.createScaledBitmap(
-            cropped,
-            inputSize,
-            inputSize,
-            true
-        )
+        val resized = cropped.scale(inputSize, inputSize)
 
         val input = preprocess(resized)
         val output = Array(1) { FloatArray(1) }
