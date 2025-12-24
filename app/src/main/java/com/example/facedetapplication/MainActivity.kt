@@ -22,7 +22,7 @@ abstract class MainActivity : AppCompatActivity(), ImageAnalysis.Analyzer {
             FaceDetector(this),
              LandmarkExtractor(this),
             FaceRecognition(this),
-            AntiSpoof(this, "anti_spoof.tflite"),
+            AntiSpoof(this, "spoof_model_scale_2_7.tflite"),
             VectorStorage(AppDatabase.create(this)),
             TemporalAggregator()
         )

@@ -13,7 +13,7 @@ class LandmarkExtractor(context: Context) {
     private val interpreter: Interpreter
 
     init {
-        interpreter = Interpreter(loadModelFile(context, "face_landmark.tflite"))
+        interpreter = Interpreter(loadModelFile(context, "Facial-Landmark-Detection.tflite"))
     }
 
     private fun loadModelFile(context: Context, filename: String): MappedByteBuffer {

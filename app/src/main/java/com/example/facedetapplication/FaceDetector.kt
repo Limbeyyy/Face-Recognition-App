@@ -12,7 +12,7 @@ import kotlin.math.min
 class FaceDetector(context: Context) {
 
     // Load BlazeFace TFLite model from assets
-    private val interpreter: Interpreter = Interpreter(FileUtil.loadMappedFile(context, "blaze_face.tflite"))
+    private val interpreter: Interpreter = Interpreter(FileUtil.loadMappedFile(context, "blaze_face_short_range.tflite"))
 
     /**
      * Detect faces in a bitmap and return a list of FaceBox
